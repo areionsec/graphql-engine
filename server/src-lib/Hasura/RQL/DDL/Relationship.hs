@@ -110,6 +110,22 @@ defaultBuildObjectRelationshipInfo ::
   ObjRelDef b ->
   m (RelInfo b, Seq SchemaDependency)
 defaultBuildObjectRelationshipInfo source foreignKeys qt (RelDef rn ru _) = case ru of
+
+  RUPolymorphic (RelPolymorphicTableConfig {rptTable = refqt, rptCommon = common, rptPolymorphicColumn = polymorphicColumn}) -> do
+    let (lCols, rCols) = unzip $ HashMap.toList $ rmColumns common
+        io = fromMaybe BeforeParent $ rmInsertOrder common
+        mkDependency tableName reason col =
+          SchemaDependency
+            ( SOSourceObj source $
+                AB.mkAnyBackend $
+                  SOITableObj @b tableName $
+                    TOCol @b col
+            )
+            reason
+        dependencies =
+          (mkDependency qt DRLeftColumn <$> Seq.fromList lCols)
+            <> (mkDependency refqt DRRightColumn <$> Seq.fromList rCols)
+    pure (RelInfo rn ObjRel (rmColumns common) (RelTargetTable refqt) True io (Just polymorphicColumn), dependencies)
   RUManual (RelManualTableConfig {rmtTable = refqt, rmtCommon = common}) -> do
     let (lCols, rCols) = unzip $ HashMap.toList $ rmColumns common
         io = fromMaybe BeforeParent $ rmInsertOrder common
@@ -124,7 +140,7 @@ defaultBuildObjectRelationshipInfo source foreignKeys qt (RelDef rn ru _) = case
         dependencies =
           (mkDependency qt DRLeftColumn <$> Seq.fromList lCols)
             <> (mkDependency refqt DRRightColumn <$> Seq.fromList rCols)
-    pure (RelInfo rn ObjRel (rmColumns common) (RelTargetTable refqt) True io, dependencies)
+    pure (RelInfo rn ObjRel (rmColumns common) (RelTargetTable refqt) True io Nothing, dependencies)
   RUFKeyOn (SameTable columns) -> do
     foreignTableForeignKeys <-
       HashMap.lookup qt foreignKeys
@@ -149,7 +165,7 @@ defaultBuildObjectRelationshipInfo source foreignKeys qt (RelDef rn ru _) = case
                 DRRemoteTable
             ]
             <> (drUsingColumnDep @b source qt <$> Seq.fromList (toList columns))
-    pure (RelInfo rn ObjRel (NEHashMap.toHashMap colMap) (RelTargetTable foreignTable) False BeforeParent, dependencies)
+    pure (RelInfo rn ObjRel (NEHashMap.toHashMap colMap) (RelTargetTable foreignTable) False BeforeParent Nothing, dependencies)
   RUFKeyOn (RemoteTable remoteTable remoteCols) ->
     mkFkeyRel ObjRel AfterParent source rn qt remoteTable remoteCols foreignKeys
 
@@ -191,7 +207,7 @@ nativeQueryRelationshipSetup sourceName nativeQueryName relType (RelDef relName 
                   DRRightColumn
             )
             (Seq.fromList rCols)
-  pure (RelInfo relName relType (rmColumns common) (RelTargetNativeQuery refqt) True io, deps)
+  pure (RelInfo relName relType (rmColumns common) (RelTargetNativeQuery refqt) True io Nothing, deps)
 
 defaultBuildArrayRelationshipInfo ::
   forall b m.
@@ -228,7 +244,34 @@ defaultBuildArrayRelationshipInfo source foreignKeys qt (RelDef rn ru _) = case 
                     DRRightColumn
               )
               (Seq.fromList rCols)
-    pure (RelInfo rn ArrRel (rmColumns common) (RelTargetTable refqt) True AfterParent, deps)
+    pure (RelInfo rn ArrRel (rmColumns common) (RelTargetTable refqt) True AfterParent Nothing, deps)
+  RUPolymorphic (RelPolymorphicTableConfig {rptTable = refqt, rptCommon = common}) -> do
+    let (lCols, rCols) = unzip $ HashMap.toList $ rmColumns common
+        deps =
+          ( fmap
+              ( \c ->
+                  SchemaDependency
+                    ( SOSourceObj source $
+                        AB.mkAnyBackend $
+                          SOITableObj @b qt $
+                            TOCol @b c
+                    )
+                    DRLeftColumn
+              )
+              (Seq.fromList lCols)
+          )
+            <> fmap
+              ( \c ->
+                  SchemaDependency
+                    ( SOSourceObj source $
+                        AB.mkAnyBackend $
+                          SOITableObj @b refqt $
+                            TOCol @b c
+                    )
+                    DRRightColumn
+              )
+              (Seq.fromList rCols)
+    pure (RelInfo rn ArrRel (rmColumns common) (RelTargetTable refqt) True AfterParent Nothing, deps)
   RUFKeyOn (ArrRelUsingFKeyOn refqt refCols) ->
     mkFkeyRel ArrRel AfterParent source rn qt refqt refCols foreignKeys
 
@@ -270,7 +313,7 @@ mkFkeyRel relType io source rn sourceTable remoteTable remoteColumns foreignKeys
           <> ( drUsingColumnDep @b source remoteTable
                  <$> Seq.fromList (toList remoteColumns)
              )
-  pure (RelInfo rn relType (reverseMap (NEHashMap.toHashMap colMap)) (RelTargetTable remoteTable) False io, dependencies)
+  pure (RelInfo rn relType (reverseMap (NEHashMap.toHashMap colMap)) (RelTargetTable remoteTable) False io Nothing, dependencies)
   where
     reverseMap :: (Hashable y) => HashMap x y -> HashMap y x
     reverseMap = HashMap.fromList . fmap swap . HashMap.toList

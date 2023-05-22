@@ -18,6 +18,8 @@ import Hasura.RQL.Types.Common
 data AnnRelationSelectG (b :: BackendType) a = AnnRelationSelectG
   { _aarRelationshipName :: RelName, -- Relationship name
     _aarColumnMapping :: HashMap (Column b) (Column b), -- Column of left table to join with
+    _aarPolymorphicTable :: Maybe Text, -- Polymorphic column
+    _aarPolymorphicColumn :: Maybe (Column b), -- Polymorphic column
     _aarAnnSelect :: a -- Current table. Almost ~ to SQL Select
   }
   deriving stock (Functor, Foldable, Traversable)

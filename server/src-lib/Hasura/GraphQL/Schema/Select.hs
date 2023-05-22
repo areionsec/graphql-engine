@@ -1530,6 +1530,7 @@ relationshipField ::
   RelInfo b ->
   SchemaT r m (Maybe [FieldParser n (AnnotatedField b)])
 relationshipField table ri = runMaybeT do
+--  error "relationshipField berko"
   tCase <- retrieve $ _rscNamingConvention . _siCustomization @b
   roleName <- retrieve scRole
   optimizePermissionFilters <- retrieve Options.soOptimizePermissionFilters
@@ -1634,7 +1635,7 @@ relationshipField table ri = runMaybeT do
             P.subselection_ relFieldName desc selectionSetParser
               <&> \fields ->
                 IR.AFObjectRelation $
-                  IR.AnnRelationSelectG (riName ri) (riMapping ri) $
+                  IR.AnnRelationSelectG (riName ri) (riMapping ri) (Just $ toTxt otherTableName) (riPolymorphicCol ri) $
                     IR.AnnObjectSelectG fields (IR.FromTable otherTableName) $
                       deduplicatePermissions $
                         IR._tpFilter $
@@ -1646,7 +1647,7 @@ relationshipField table ri = runMaybeT do
             otherTableParser <&> \selectExp ->
               IR.AFArrayRelation $
                 IR.ASSimple $
-                  IR.AnnRelationSelectG (riName ri) (riMapping ri) $
+                  IR.AnnRelationSelectG (riName ri) (riMapping ri) Nothing (riPolymorphicCol ri) $
                     deduplicatePermissions' selectExp
           relAggFieldName = applyFieldNameCaseCust tCase $ relFieldName <> Name.__aggregate
           relAggDesc = Just $ G.Description "An aggregate relationship"
@@ -1665,8 +1666,8 @@ relationshipField table ri = runMaybeT do
       pure $
         catMaybes
           [ Just arrayRelField,
-            fmap (IR.AFArrayRelation . IR.ASAggregate . IR.AnnRelationSelectG (riName ri) (riMapping ri)) <$> remoteAggField,
-            fmap (IR.AFArrayRelation . IR.ASConnection . IR.AnnRelationSelectG (riName ri) (riMapping ri)) <$> remoteConnectionField
+            fmap (IR.AFArrayRelation . IR.ASAggregate . IR.AnnRelationSelectG (riName ri) (riMapping ri) Nothing (riPolymorphicCol ri)) <$> remoteAggField,
+            fmap (IR.AFArrayRelation . IR.ASConnection . IR.AnnRelationSelectG (riName ri) (riMapping ri) Nothing (riPolymorphicCol ri)) <$> remoteConnectionField
           ]
 
 tablePermissionsInfo :: (Backend b) => SelPermInfo b -> TablePerms b
@@ -1710,7 +1711,7 @@ logicalModelObjectRelationshipField logicalModelName ri | riType ri == ObjRel =
 
       pure $
         nativeQueryParser <&> \selectExp ->
-          IR.AFObjectRelation (IR.AnnRelationSelectG (riName ri) (riMapping ri) selectExp)
+          IR.AFObjectRelation (IR.AnnRelationSelectG (riName ri) (riMapping ri) Nothing (riPolymorphicCol ri) selectExp)
     RelTargetTable _otherTableName -> do
       throw500 "Object relationships from logical models to tables are not implemented"
 logicalModelObjectRelationshipField _ _ =
@@ -1751,7 +1752,7 @@ logicalModelArrayRelationshipField logicalModelName ri | riType ri == ArrRel =
         nativeQueryParser <&> \selectExp ->
           IR.AFArrayRelation $
             IR.ASSimple $
-              IR.AnnRelationSelectG (riName ri) (riMapping ri) selectExp
+              IR.AnnRelationSelectG (riName ri) (riMapping ri) Nothing (riPolymorphicCol ri) selectExp
     RelTargetTable _otherTableName -> do
       throw500 "Array relationships from logical models to tables are not implemented"
 logicalModelArrayRelationshipField _ _ =

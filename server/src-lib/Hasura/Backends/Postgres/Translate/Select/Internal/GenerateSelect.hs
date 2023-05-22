@@ -10,6 +10,7 @@ module Hasura.Backends.Postgres.Translate.Select.Internal.GenerateSelect
   )
 where
 
+import Data.Text qualified as T (split, isInfixOf)
 import Data.HashMap.Strict qualified as HashMap
 import Data.List.NonEmpty qualified as NE
 import Hasura.Backends.Postgres.SQL.DML qualified as S
@@ -104,10 +105,10 @@ generateSQLSelect joinCondition selectSource selectNode =
     objectRelationToFromItem ::
       (ObjectRelationSource, SelectNode) -> S.FromItem
     objectRelationToFromItem (objectRelationSource, node) =
-      let ObjectRelationSource _ colMapping objectSelectSource = objectRelationSource
+      let ObjectRelationSource _ colMapping polymorphicTableName polymorphicColumn objectSelectSource = objectRelationSource
           alias = S.toTableAlias $ _ossPrefix objectSelectSource
           source = objectSelectSourceToSelectSource objectSelectSource
-          select = generateSQLSelect (mkJoinCond baseSelectIdentifier colMapping) source node
+          select = generateSQLSelect (mkJoinCond baseSelectIdentifier colMapping polymorphicTableName polymorphicColumn) source node
        in S.mkLateralFromItem select alias
 
     arrayRelationToFromItem ::
@@ -117,7 +118,7 @@ generateSQLSelect joinCondition selectSource selectNode =
           alias = S.toTableAlias $ _ssPrefix source
           select =
             generateSQLSelectFromArrayNode source arraySelectNode $
-              mkJoinCond baseSelectIdentifier colMapping
+              mkJoinCond baseSelectIdentifier colMapping Nothing Nothing
        in S.mkLateralFromItem select alias
 
     arrayConnectionToFromItem ::
@@ -159,11 +160,23 @@ generateSQLSelectFromArrayNode selectSource (MultiRowSelectNode topExtractors se
             ]
     }
 
-mkJoinCond :: S.TableIdentifier -> HashMap PGCol PGCol -> S.BoolExp
-mkJoinCond baseTablepfx colMapn =
+mkJoinCond :: S.TableIdentifier -> HashMap PGCol PGCol -> Maybe Text -> Maybe PGCol -> S.BoolExp
+mkJoinCond baseTablepfx colMapn (Just polymorphicTableName) (Just polymorphicColumn) =
+  foldl' (S.BEBin S.AndOp) (S.BELit True) $
+    ( flip map (HashMap.toList colMapn) $ \(lCol, rCol) ->
+       S.BECompare S.SEQ (S.mkQIdenExp baseTablepfx lCol) (S.mkSIdenExp rCol)
+    )
+ <> [ S.BECompare S.SEQ (S.mkQIdenExp baseTablepfx polymorphicColumn) (S.SELit tableName) ]
+  where
+    tableName = if "." `T.isInfixOf` polymorphicTableName
+                then head . drop 1 . T.split (== '.') $ polymorphicTableName
+                else polymorphicTableName
+
+mkJoinCond baseTablepfx colMapn _ _ =
   foldl' (S.BEBin S.AndOp) (S.BELit True) $
     flip map (HashMap.toList colMapn) $ \(lCol, rCol) ->
       S.BECompare S.SEQ (S.mkQIdenExp baseTablepfx lCol) (S.mkSIdenExp rCol)
+
 
 connectionToSelectWith ::
   S.TableAlias ->
@@ -208,7 +221,7 @@ connectionToSelectWith rootSelectAlias arrayConnectionSource arraySelectNode =
     endRowNumberExp = mkLastElementExp $ S.SEIdentifier rowNumberIdentifier
 
     fromBaseSelections =
-      let joinCond = mkJoinCond rootSelectIdentifier columnMapping
+      let joinCond = mkJoinCond rootSelectIdentifier columnMapping Nothing Nothing
           baseSelectFrom =
             S.mkSelFromItem
               (generateSQLSelect joinCond selectSource selectNode)

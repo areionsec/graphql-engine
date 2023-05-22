@@ -117,7 +117,7 @@ processOrderByItems sourcePrefix' fieldAlias' similarArrayFields distOnCols = \c
               toIdentifier $
                 ciColumn pgColInfo
         AOCObjectRelation relInfo relFilter rest -> withWriteObjectRelation $ do
-          let RelInfo {riName = relName, riMapping = colMapping, riTarget = relTarget} = relInfo
+          let RelInfo {riName = relName, riMapping = colMapping, riTarget = relTarget, riPolymorphicCol = polymorphicColumn} = relInfo
               relSourcePrefix = mkObjectRelationTableAlias sourcePrefix relName
               fieldName = mkOrderByFieldName relName
           case relTarget of
@@ -130,14 +130,14 @@ processOrderByItems sourcePrefix' fieldAlias' similarArrayFields distOnCols = \c
                       (tableIdentifierToIdentifier relSourcePrefix)
                       (S.FISimple relTable Nothing)
                       (toSQLBoolExp (S.QualTable relTable) relFilter)
-                  relSource = ObjectRelationSource relName colMapping selectSource
+                  relSource = ObjectRelationSource relName colMapping (Just $ qualifiedObjectToText relTable) polymorphicColumn selectSource
               pure
                 ( relSource,
                   HashMap.singleton relOrderByAlias relOrdByExp,
                   S.mkQIdenExp relSourcePrefix relOrderByAlias
                 )
         AOCArrayAggregation relInfo relFilter aggOrderBy -> withWriteArrayRelation $ do
-          let RelInfo {riName = relName, riMapping = colMapping, riTarget = relTarget} = relInfo
+          let RelInfo {riName = relName, riMapping = colMapping, riTarget = relTarget, riPolymorphicCol = polymorphicColumn} = relInfo
           case relTarget of
             RelTargetNativeQuery _ -> error "processAnnotatedOrderByElement RelTargetNativeQuery (AOCArrayAggregation)"
             RelTargetTable relTable -> do

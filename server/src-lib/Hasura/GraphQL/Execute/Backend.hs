@@ -197,11 +197,11 @@ convertRemoteSourceRelationship
 
       relationshipField = case relationship of
         SourceRelationshipObject s ->
-          AFObjectRelation $ AnnRelationSelectG relName columnMapping s
+          AFObjectRelation $ AnnRelationSelectG relName columnMapping Nothing Nothing s
         SourceRelationshipArray s ->
-          AFArrayRelation $ ASSimple $ AnnRelationSelectG relName columnMapping s
+          AFArrayRelation $ ASSimple $ AnnRelationSelectG relName columnMapping Nothing Nothing s
         SourceRelationshipArrayAggregate s ->
-          AFArrayRelation $ ASAggregate $ AnnRelationSelectG relName columnMapping s
+          AFArrayRelation $ ASAggregate $ AnnRelationSelectG relName columnMapping Nothing Nothing s
 
       argumentIdField =
         ( fromCol @b argumentIdColumn,

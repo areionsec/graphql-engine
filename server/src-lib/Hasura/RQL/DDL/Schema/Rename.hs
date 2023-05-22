@@ -296,6 +296,9 @@ updateRelDefs source qt rn renameTable = do
         RUManual (RelManualTableConfig origQT (RelManualCommon rmCols rmIO)) ->
           let updQT = bool origQT newQT $ oldQT == origQT
            in RUManual $ RelManualTableConfig updQT (RelManualCommon rmCols rmIO)
+        RUPolymorphic (RelPolymorphicTableConfig origQT (RelManualCommon rmCols rmIO) polymorphicColumn) ->
+          let updQT = bool origQT newQT $ oldQT == origQT
+           in RUPolymorphic $ RelPolymorphicTableConfig updQT (RelManualCommon rmCols rmIO) polymorphicColumn
 
     updateArrRelDef :: RenameTable b -> ArrRelDef b -> ArrRelDef b
     updateArrRelDef (oldQT, newQT) =
@@ -306,6 +309,9 @@ updateRelDefs source qt rn renameTable = do
         RUManual (RelManualTableConfig origQT (RelManualCommon rmCols rmIO)) ->
           let updQT = getUpdQT origQT
            in RUManual $ RelManualTableConfig updQT (RelManualCommon rmCols rmIO)
+        RUPolymorphic (RelPolymorphicTableConfig origQT (RelManualCommon rmCols rmIO) polymorphicColumn) ->
+          let updQT = getUpdQT origQT
+           in RUPolymorphic $ RelPolymorphicTableConfig updQT (RelManualCommon rmCols rmIO) polymorphicColumn
       where
         getUpdQT origQT = bool origQT newQT $ oldQT == origQT
 
@@ -673,6 +679,8 @@ updateColInObjRel fromQT toQT rnCol = \case
     RUFKeyOn $ updateRelChoice fromQT toQT rnCol c
   RUManual manConfig ->
     RUManual $ updateRelManualConfig fromQT toQT rnCol manConfig
+  RUPolymorphic polymorphicConfig ->
+    RUPolymorphic $ updateRelPolymorphicConfig fromQT toQT rnCol polymorphicConfig
 
 updateRelChoice ::
   (Backend b) =>
@@ -698,6 +706,7 @@ updateColInArrRel fromQT toQT rnCol = \case
     let updCol = getNewCol rnCol toQT c
      in RUFKeyOn $ ArrRelUsingFKeyOn t updCol
   RUManual manConfig -> RUManual $ updateRelManualConfig fromQT toQT rnCol manConfig
+  RUPolymorphic polymorphicConfig -> RUPolymorphic $ updateRelPolymorphicConfig fromQT toQT rnCol polymorphicConfig
 
 type ColMap b = HashMap (Column b) (Column b)
 
@@ -730,6 +739,17 @@ updateRelManualConfig ::
   RelManualTableConfig b
 updateRelManualConfig fromQT toQT rnCol (RelManualTableConfig tn (RelManualCommon colMap io)) =
   RelManualTableConfig tn (RelManualCommon (updateColMap fromQT toQT rnCol colMap) io)
+
+updateRelPolymorphicConfig ::
+  forall b.
+  (Backend b) =>
+  TableName b ->
+  TableName b ->
+  RenameCol b ->
+  RelPolymorphicTableConfig b ->
+  RelPolymorphicTableConfig b
+updateRelPolymorphicConfig fromQT toQT rnCol (RelPolymorphicTableConfig tn (RelManualCommon colMap io) polymorphicColumn) =
+  RelPolymorphicTableConfig tn (RelManualCommon (updateColMap fromQT toQT rnCol colMap) io) polymorphicColumn
 
 updateColMap ::
   forall b.

@@ -12,6 +12,7 @@ module Hasura.RQL.Types.Relationships.Local
     RelTarget (..),
     RelInfo (..),
     RelManualTableConfig (..),
+    RelPolymorphicTableConfig (..),
     RelManualNativeQueryConfig (..),
     RelManualCommon (..),
     RelUsing (..),
@@ -24,7 +25,7 @@ module Hasura.RQL.Types.Relationships.Local
   )
 where
 
-import Autodocodec (HasCodec (codec), HasObjectCodec, dimapCodec, disjointEitherCodec, optionalField', requiredField')
+import Autodocodec (HasCodec (codec), HasObjectCodec, matchChoicesCodec, dimapCodec, disjointEitherCodec, optionalField', requiredField')
 import Autodocodec qualified as AC
 import Autodocodec.Extended (optionalFieldOrIncludedNull', typeableName)
 import Control.Lens (makeLenses)
@@ -82,6 +83,19 @@ deriving instance Backend b => Eq (RelManualTableConfig b)
 
 deriving instance Backend b => Show (RelManualTableConfig b)
 
+
+data RelPolymorphicTableConfig (b :: BackendType) = RelPolymorphicTableConfig
+  { rptTable :: TableName b,
+    rptCommon :: RelManualCommon b,
+    rptPolymorphicColumn :: Column b
+  }
+  deriving (Generic)
+  deriving (FromJSON, ToJSON) via AC.Autodocodec (RelPolymorphicTableConfig b)
+
+deriving instance Backend b => Eq (RelPolymorphicTableConfig b)
+
+deriving instance Backend b => Show (RelPolymorphicTableConfig b)
+
 data RelManualNativeQueryConfig (b :: BackendType) = RelManualNativeQueryConfig
   { rmnNativeQueryName :: NativeQueryName,
     rmnCommon :: RelManualCommon b
@@ -109,6 +123,14 @@ instance (Backend b) => HasCodec (RelManualTableConfig b) where
         <$> requiredField' "remote_table" AC..= rmtTable
         <*> AC.objectCodec AC..= rmtCommon
 
+instance (Backend b) => HasCodec (RelPolymorphicTableConfig b) where
+  codec =
+    AC.object (backendPrefix @b <> "RelPolymorphicTableConfig") $
+      RelPolymorphicTableConfig
+        <$> requiredField' "remote_table" AC..= rptTable
+        <*> AC.objectCodec AC..= rptCommon
+        <*> requiredField' "polymorphic_column" AC..= rptPolymorphicColumn
+
 instance (Backend b) => HasCodec (RelManualNativeQueryConfig b) where
   codec =
     AC.object (backendPrefix @b <> "RelManualNativeQueryConfig") $
@@ -125,10 +147,17 @@ instance (Backend b) => AC.HasObjectCodec (RelManualCommon b) where
 data RelUsing (b :: BackendType) a
   = RUFKeyOn a
   | RUManual (RelManualTableConfig b)
+  | RUPolymorphic (RelPolymorphicTableConfig b)
   deriving (Show, Eq, Generic)
 
 instance (Backend b, HasCodec a, Typeable a) => HasCodec (RelUsing b a) where
-  codec = dimapCodec dec enc $ disjointEitherCodec fkCodec manualCodec
+  codec = matchChoicesCodec
+    [ (fkPred, fkCodec)
+    , (manualPred, manualCodec)
+    , (polymorphicPred, polymorphicCodec)
+    ]
+    fkCodec
+
     where
       fkCodec =
         AC.object ("RUFKeyOn_" <> typeableName @a) $
@@ -138,25 +167,39 @@ instance (Backend b, HasCodec a, Typeable a) => HasCodec (RelUsing b a) where
         AC.object (backendPrefix @b <> "RUManual") $
           requiredField' "manual_configuration"
 
-      dec = either RUFKeyOn RUManual
-      enc (RUFKeyOn fkey) = Left fkey
-      enc (RUManual manual) = Right manual
+      polymorphicCodec =
+        AC.object (backendPrefix @b <> "RUPolymorphic") $
+          requiredField' "polymorphic_configuration"
+
+      fkPred x@(RUFKeyOn _) = Just x
+      fkPred _              = Nothing
+
+      manualPred x@(RUManual _) = Just x
+      manualPred _              = Nothing
+
+      polymorphicPred x@(RUPolymorphic _) = Just x
+      polymorphicPred _                   = Nothing
+
 
 instance (Backend b, ToJSON a) => ToJSON (RelUsing b a) where
   toJSON (RUFKeyOn fkey) =
     object ["foreign_key_constraint_on" .= fkey]
   toJSON (RUManual manual) =
     object ["manual_configuration" .= manual]
+  toJSON (RUPolymorphic polymorphic) =
+    object ["polymorphic_configuration" .= polymorphic]
 
 instance (FromJSON a, Backend b) => FromJSON (RelUsing b a) where
   parseJSON (Object o) = do
     let fkeyOnM = KM.lookup "foreign_key_constraint_on" o
         manualM = KM.lookup "manual_configuration" o
-        msgFrag = "one of foreign_key_constraint_on/manual_configuration should be present"
-    case (fkeyOnM, manualM) of
-      (Nothing, Nothing) -> fail $ "atleast " <> msgFrag
-      (Just a, Nothing) -> RUFKeyOn <$> parseJSON a
-      (Nothing, Just b) -> RUManual <$> parseJSON b
+        polymorphicM = KM.lookup "polymorphic_configuration" o
+        msgFrag = "one of foreign_key_constraint_on/manual_configuration/polymorphic_configuration should be present"
+    case (fkeyOnM, manualM, polymorphicM) of
+      (Nothing, Nothing, Nothing) -> fail $ "atleast " <> msgFrag
+      (Just a, Nothing, Nothing) -> RUFKeyOn <$> parseJSON a
+      (Nothing, Just b, Nothing) -> RUManual <$> parseJSON b
+      (Nothing, Nothing, Just c) -> RUPolymorphic <$> parseJSON c
       _ -> fail $ "only " <> msgFrag
   parseJSON _ =
     fail "using should be an object"
@@ -362,7 +405,8 @@ data RelInfo (b :: BackendType) = RelInfo
     riMapping :: HashMap (Column b) (Column b),
     riTarget :: RelTarget b,
     riIsManual :: Bool,
-    riInsertOrder :: InsertOrder
+    riInsertOrder :: InsertOrder,
+    riPolymorphicCol :: Maybe (Column b)
   }
   deriving (Generic)
 

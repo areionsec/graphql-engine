@@ -273,7 +273,7 @@ convExtRel sqlGen fieldInfoMap relName mAlias selQ sessVarBldr prepValBldr = do
   relInfo <-
     withPathK "name" $
       askRelType fieldInfoMap relName pgWhenRelErr
-  let (RelInfo {riType = relTy, riMapping = colMapping, riTarget = relTarget}) = relInfo
+  let (RelInfo {riType = relTy, riMapping = colMapping, riTarget = relTarget, riPolymorphicCol = polymorphicColumn}) = relInfo
   relTableName <- case relTarget of
     RelTargetNativeQuery _ -> error "convExtRel RelTargetNativeQuery"
     RelTargetTable tn -> pure tn
@@ -284,7 +284,7 @@ convExtRel sqlGen fieldInfoMap relName mAlias selQ sessVarBldr prepValBldr = do
       when misused $ throw400 UnexpectedPayload objRelMisuseMsg
       pure $
         Left $
-          AnnRelationSelectG (fromMaybe relName mAlias) colMapping $
+          AnnRelationSelectG (fromMaybe relName mAlias) colMapping (Just $ qualifiedObjectToText relTableName) polymorphicColumn $
             AnnObjectSelectG (_asnFields annSel) (FromTable relTableName) $
               _tpFilter $
                 _asnPerm annSel
@@ -295,6 +295,8 @@ convExtRel sqlGen fieldInfoMap relName mAlias selQ sessVarBldr prepValBldr = do
             AnnRelationSelectG
               (fromMaybe relName mAlias)
               colMapping
+              Nothing
+              polymorphicColumn
               annSel
   where
     pgWhenRelErr = "only relationships can be expanded"

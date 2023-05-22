@@ -128,7 +128,7 @@ translateBoolExp = \case
       (RelInfo {riTarget = RelTargetNativeQuery _})
       _ -> error "translateBoolExp RelTargetNativeQuery"
     AVRelationship
-      (RelInfo {riMapping = colMapping, riTarget = RelTargetTable relTN})
+      (RelInfo {riMapping = colMapping, riTarget = RelTargetTable relTN, riPolymorphicCol = mPolymorphicColumn})
       RelationshipFilters
         { rfTargetTablePermissions,
           rfFilter
@@ -150,7 +150,7 @@ translateBoolExp = \case
             )
             (translateBoolExp rfTargetTablePermissions)
         annRelBoolExp <- withCurrentTable relTNQual (translateBoolExp rfFilter)
-        tableRelExp <- translateTableRelationship colMapping relTNIdentifier
+        tableRelExp <- translateTableRelationship colMapping relTNIdentifier mPolymorphicColumn
         let innerBoolExp = S.BEBin S.AndOp tableRelExp (S.BEBin S.AndOp permBoolExp annRelBoolExp)
         return $ S.mkExists (S.FISimple relTN $ Just $ relTNAlias) innerBoolExp
     AVComputedField (AnnComputedFieldBoolExp _ _ function sessionArgPresence cfBoolExp) -> do
@@ -220,11 +220,11 @@ translateAVAggregationPredicates ::
   AggregationPredicatesImplementation ('Postgres pgKind) (SQLExpression ('Postgres pgKind)) ->
   BoolExpM S.BoolExp
 translateAVAggregationPredicates
-  api@(AggregationPredicatesImplementation (RelInfo {riTarget = RelTargetTable relTableName, riMapping = colMapping}) _rowPermissions predicate) = do
+  api@(AggregationPredicatesImplementation (RelInfo {riTarget = RelTargetTable relTableName, riMapping = colMapping, riPolymorphicCol = mPolymorphicColumn}) _rowPermissions predicate) = do
     -- e.g. __be_0_<schema>_<table_name>
     relTableNameAlias <- S.toTableAlias <$> freshIdentifier relTableName
     let relTableNameIdentifier = S.tableAliasToIdentifier relTableNameAlias
-    tableRelExp <- translateTableRelationship colMapping relTableNameIdentifier
+    tableRelExp <- translateTableRelationship colMapping relTableNameIdentifier mPolymorphicColumn
     let subselectAlias = S.mkTableAlias "_sub"
         subselectIdentifier = S.tableAliasToIdentifier subselectAlias
         relTable = S.QualifiedIdentifier relTableNameIdentifier Nothing
@@ -280,7 +280,7 @@ translateAggPredsSubselect
       RelInfo {riTarget = RelTargetTable relTableName}
       rowPermissions
       predicate
-    ) = do
+    ) = do 
     mFilter <- traverse translateBoolExp (aggPredFilter predicate)
     rowPermExp <- translateBoolExp rowPermissions
     let relTableNameIdentifier = S.tableAliasToIdentifier relTableNameAlias
@@ -321,8 +321,8 @@ translateAggPredArguments predArgs relTableNameIdentifier =
     (AggregationPredicateArguments cols) ->
       S.SEQIdentifier . S.mkQIdentifier relTableNameIdentifier <$> cols
 
-translateTableRelationship :: HashMap PGCol PGCol -> TableIdentifier -> BoolExpM S.BoolExp
-translateTableRelationship colMapping relTableNameIdentifier = do
+translateTableRelationship :: HashMap PGCol PGCol -> TableIdentifier -> Maybe PGCol -> BoolExpM S.BoolExp
+translateTableRelationship colMapping relTableNameIdentifier Nothing = do
   BoolExpCtx {currTableReference} <- ask
   pure $
     sqlAnd $
@@ -331,6 +331,23 @@ translateTableRelationship colMapping relTableNameIdentifier = do
           S.SEQ
           (S.mkIdentifierSQLExp (S.QualifiedIdentifier relTableNameIdentifier Nothing) rCol)
           (S.mkIdentifierSQLExp currTableReference lCol)
+
+translateTableRelationship colMapping relTableNameIdentifier (Just polymorphicColumn) = do
+  BoolExpCtx {currTableReference} <- ask
+  pure $
+    sqlAnd $
+      ( flip map (HashMap.toList colMapping) $ \(lCol, rCol) ->
+        S.BECompare
+          S.SEQ
+          (S.mkIdentifierSQLExp (S.QualifiedIdentifier relTableNameIdentifier Nothing) rCol)
+          (S.mkIdentifierSQLExp currTableReference lCol)
+      )
+   <> [ S.BECompare
+          S.SEQ
+           (S.mkIdentifierSQLExp currTableReference polymorphicColumn)
+           (S.SELit $ unTableIdentifier relTableNameIdentifier)
+      ]
+
 
 data LHSField b
   = LColumn FieldName

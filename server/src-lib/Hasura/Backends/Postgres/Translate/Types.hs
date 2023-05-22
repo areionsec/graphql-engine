@@ -169,6 +169,8 @@ objectSelectSourceToSelectSource ObjectSelectSource {..} =
 data ObjectRelationSource = ObjectRelationSource
   { _orsRelationshipName :: RelName,
     _orsRelationMapping :: HashMap.HashMap Postgres.PGCol Postgres.PGCol,
+    _orsRelationPolymorphicTableName :: Maybe Text,
+    _orsRelationPolymorphicColumn    :: Maybe (Postgres.PGCol),
     _orsSelectSource :: ObjectSelectSource
   }
   deriving (Generic, Show)
