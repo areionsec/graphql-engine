@@ -41,6 +41,7 @@ import Hasura.Tracing (ignoreTraceT)
 import Servant.Client qualified as Servant
 import Servant.Client.Core.HasClient ((//))
 import Servant.Client.Generic (genericClient)
+import System.Environment (lookupEnv)
 
 --------------------------------------------------------------------------------
 
@@ -92,14 +93,23 @@ runAddDataConnectorAgent ::
   DCAddAgent ->
   m EncJSON
 runAddDataConnectorAgent DCAddAgent {..} = do
+  --
+  mUrl <- liftIO $ lookupEnv "DATA_CONNECTOR_AGENT_URL"
+  gdcaUrlFromEnv <- case mUrl of
+    Nothing  -> return _gdcaUrl
+    Just url -> case runExceptT $ Servant.parseBaseUrl url of
+        Right (Right x) -> return x
+        _               -> return _gdcaUrl
+
+  --
   let agent :: DC.Types.DataConnectorOptions
-      agent = DC.Types.DataConnectorOptions _gdcaUrl _gdcaDisplayName
+      agent = DC.Types.DataConnectorOptions gdcaUrlFromEnv _gdcaDisplayName
   sourceKinds <- (:) "postgres" . fmap _skiSourceKind . unSourceKinds <$> agentSourceKinds
   if
       | toTxt _gdcaName `elem` sourceKinds -> Error.throw400 Error.AlreadyExists $ "SourceKind '" <> toTxt _gdcaName <> "' already exists."
       | _gdcaSkipCheck == SkipCheck True -> addAgent _gdcaName agent
       | otherwise ->
-          checkAgentAvailability _gdcaUrl >>= \case
+          checkAgentAvailability gdcaUrlFromEnv >>= \case
             NotAvailable err ->
               pure $
                 EncJSON.encJFromJValue $
