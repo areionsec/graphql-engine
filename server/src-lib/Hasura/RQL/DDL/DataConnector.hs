@@ -17,6 +17,7 @@ import Control.Monad.Except
 import Control.Monad.Trans.Control
 import Data.Aeson (FromJSON, ToJSON, (.!=), (.:), (.:?), (.=))
 import Data.Aeson qualified as J
+import qualified Data.ByteString.Lazy.Char8 as BL (pack)
 import Data.Has
 import Data.Map.Strict qualified as Map
 import Data.Monoid
@@ -38,6 +39,8 @@ import Hasura.SQL.BackendMap qualified as BackendMap
 import Hasura.Services.Network
 import Hasura.Tracing (ignoreTraceT)
 import Servant.Client qualified as Servant
+import System.Environment (lookupEnv)
+
 
 --------------------------------------------------------------------------------
 
@@ -89,14 +92,28 @@ runAddDataConnectorAgent ::
   DCAddAgent ->
   m EncJSON
 runAddDataConnectorAgent DCAddAgent {..} = do
+  mUrlMapJson <- liftIO $ lookupEnv "DATA_CONNECTOR_AGENT_URL_MAP"
+  gdcaUrl <- case mUrlMapJson of
+    Nothing  -> return _gdcaUrl
+    -- if env var exists
+    Just urlMapJson -> case J.decode (BL.pack urlMapJson) of
+        Nothing -> return _gdcaUrl
+        -- if it's a JSON of a map
+        Just urlMap -> case Map.lookup _gdcaName urlMap of
+            Nothing -> return _gdcaUrl
+            -- if the map contains the data connector's name
+            Just url -> case runExceptT $ Servant.parseBaseUrl url of
+                Right (Right servantUrl) -> return servantUrl
+                _                        -> return _gdcaUrl
+
   let agent :: DC.Types.DataConnectorOptions
-      agent = DC.Types.DataConnectorOptions _gdcaUrl _gdcaDisplayName
+      agent = DC.Types.DataConnectorOptions gdcaUrl _gdcaDisplayName
   sourceKinds <- (:) "postgres" . fmap _skiSourceKind . unSourceKinds <$> agentSourceKinds
   if
     | toTxt _gdcaName `elem` sourceKinds -> Error.throw400 Error.AlreadyExists $ "SourceKind '" <> toTxt _gdcaName <> "' already exists."
     | _gdcaSkipCheck == SkipCheck True -> addAgent _gdcaName agent
     | otherwise ->
-        checkAgentAvailability _gdcaUrl >>= \case
+        checkAgentAvailability gdcaUrl >>= \case
           NotAvailable err ->
             pure
               $ EncJSON.encJFromJValue
